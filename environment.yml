@@ -1,0 +1,9 @@
+name: gmres-tutorial
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - numpy
+  - matplotlib
+  - jupyter
+  - nbstripout   # only needed to commit notebook changes (git filter)
