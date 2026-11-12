@@ -5,8 +5,8 @@ from the bare idea to the solver in
 `WhistlerRegulatedHeatDispersion/src/time_integration/implicit/`. Every step follows the same
 pattern: run the previous version on a small matrix, show what goes wrong, then add the fix.
 
-Steps 0–4 are written. For those, this outline records what each notebook contains and the
-numbers it found. For Steps 5–9 it lists what each notebook should contain.
+Steps 0–5 are written. For those, this outline records what each notebook contains and the
+numbers it found. For Steps 6–9 it lists what each notebook should contain.
 
 ---
 
@@ -43,7 +43,7 @@ examples.
 | `GMRES_2_arnoldi_orthogonalise.ipynb` | 2 | I | same math, computed better | `gmres_v1` | 1 | done |
 | `GMRES_3_arnoldi_least_squares.ipynb` | 3 | I | same math, computed better | `gmres_v2` | 1, 2 | done |
 | `GMRES_4_givens.ipynb` | 4 | I | same math, computed better | `gmres_v3` | 2, 3 | done |
-| `GMRES_5_breakdown.ipynb` | 5 | I | same math, computed safely | `gmres_v4` | 2, 4 | planned |
+| `GMRES_5_breakdown.ipynb` | 5 | I | same math, computed safely | `gmres_v4` | 2, 4 | done |
 | `GMRES_6_convergence.ipynb` | 6 | II | analysis, no new version | (uses v4) | 2, 5 | planned |
 | `GMRES_7_restart.ipynb` | 7 | II | changes the math | `gmres_v5` | 5 | planned |
 | `GMRES_8_preconditioning.ipynb` | 8 | II | changes the math | `gmres_v6` | 7 | planned |
@@ -142,7 +142,7 @@ only available as a function `v -> Av`.
   | Version | Step | Adds |
   |---|---|---|
   | `gmres_v3` | 4 | keyword `atol`; tolerance `max(rtol·‖b‖, atol)` |
-  | `gmres_v4` | 5 | record key `breakdown` |
+  | `gmres_v4` | 5 | record keys `breakdown` and `residual_norm` (the residual of the returned x: the Givens estimate, or the true residual after a breakdown) |
   | `gmres_v5` | 7 | keyword `restart=None`; record key `cycles` |
   | `gmres_v6` | 8 | optional third positional argument `preconditioner=None`, in production's order |
 
@@ -179,6 +179,15 @@ only available as a function `v -> Av`.
 - Sliders (`ipywidgets`) for "step k" plots, or static figure grids? (Step 3 uses static
   grids.)
 - The probing appendix as its own notebook (`GMRES_8a_probing.ipynb`) or inside notebook 8?
+- Production's pivot test in `gmres.py: _arnoldi_steps` is absolute (`pivot > 0`). On
+  `singular3` the round-off pivot 1.7e-16 passes it, and the true-residual check then falls
+  back to the start of the cycle (x = 0, residual 1.73) instead of the best iterate x₂
+  (residual 1.0). A relative test, `pivot > eps * norm(column)`, returns x₂ and changes
+  nothing on the other examples (Step 5.9). Change production? The tutorial's v4–v6 keep the
+  absolute test so Step 9 compares exactly.
+- `gmres.py`'s module docstring counts a solve as `iterations + cycles − 1` operator calls,
+  plus one per breakdown cycle. It leaves out the call spent on an unusable step:
+  `nilpotent2` takes 0 iterations and 2 calls (Step 5.7).
 
 **Still to check numerically**
 
@@ -186,12 +195,6 @@ only available as a function `v -> Av`.
   nonnormal at the chosen n. Step 6 picks it, and with it the builder's default c (none
   today; Steps 3–4 and `EXAMPLES` use c = 20).
 - That v5, v6 and production `gmres` give the same iterates to round-off (Step 9).
-
-**Stale references to fix after the renumbering.** Breakdown is now Step 5 and convergence
-Step 6. The finished notebooks still say "Step 5" for convergence and "Step 6" for breakdown
-(about 8 and 17 places in notebooks 1–4), and `convdiff_n`'s docstring says c is "chosen in
-Step 5". Notebook 4's closing "Next: Step 5" paragraph introduces convergence and needs to
-introduce breakdown instead (see "Step 4 → 5" above).
 
 ---
 
@@ -216,20 +219,21 @@ GMRES's behaviour depends on both.
 
 | Name | Size | Shows | Used in Step | In `tutorial_utils.py` |
 |---|---|---|---|---|
-| `geo3` | 3×3 | Krylov geometry; Arnoldi by hand; a flagged breakdown at k = 3 | 1, 2, 3, 4, (5) | yes |
+| `geo3` | 3×3 | Krylov geometry; Arnoldi by hand; a flagged breakdown at k = 3 | 1, 2, 3, 4, 5 | yes |
 | `diag_narrow` | 100×100 | Fast convergence, eigenvalues in [1, 1.5] | 1, 2, 3, 4 | yes |
 | `diag_spread` | n×n, n = 20 | Slow convergence; v0's failure; at 12 decades, one-pass Gram–Schmidt's failure | 1–4, 6 (12 decades: 2, 3) | yes |
 | `convdiff_n` | n×n, n ≈ 20–50 | Hessenberg shape, nonnormality, preconditioning | 3, 4, 5, 6, 7, 8 | yes |
 | `shift_n` | n×n, n = 8 | No progress at all until step n | 4, 6, 7 | yes |
-| `eig_rhs` | 3×3 | Lucky breakdown at step 1 | 5 | to add |
-| `singular3` | 3×3 | Breakdown with a zero pivot; v3 reports false convergence | 5 | to add |
-| `nilpotent2` | 2×2 | Zero pivot on the very first step | 5 | to add |
+| `eig_rhs` | 3×3 | Lucky breakdown at step 1 | 5 | yes |
+| `singular3` | 3×3 | Breakdown with a round-off zero pivot; v3 reports false convergence. With `rhs="in_range"`, a lucky breakdown on the same singular A | 5 | yes |
+| `nilpotent2` | 2×2 | Exact zero pivot on the very first step | 5 | yes |
 | `diag_clustered` | n×n, n ≈ 20 | Fast convergence from clustered eigenvalues | 6 | to add |
 | `embree3` | 3×3 | A longer restart can be slower | 7 | to add |
 | `two_scale` | 2n×2n, n ≈ 10 | Why scaling matters for a 2-norm method | 8 | to add |
 
 `EXAMPLES` (the name → builder map Step 9 runs over) holds `geo3`, `diag_narrow`,
-`diag_spread`, `convdiff_n` (c = 20) and `shift_n` today. Later builders join it when added.
+`diag_spread`, `convdiff_n` (c = 20), `shift_n`, `eig_rhs`, `singular3`, `singular3_in_range`
+and `nilpotent2` today. Later builders join it when added.
 
 ### Each matrix
 
@@ -267,7 +271,10 @@ tridiagonal matrix with diagonal `2/h²`, sub-diagonal `−1/h² − c/(2h)` and
 (equivalently the cell Péclet number c·h/2) sets its character:
 - `c = 0`: symmetric, the 1D heat-equation matrix, with a tridiagonal `H̄` (Step 3.4). Two
   right-hand sides break down early: `ones` is symmetric about the grid's middle, so its
-  Krylov space stops at k = n/2 (k = 10 for n = 20); `sine` is an exact eigenvector (k = 1).
+  Krylov space stops at k = n/2 (k = 10 for n = 20); `sine` is an eigenvector in exact
+  arithmetic (k = 1). In floating point the step-1 remainder of `sine` is 61.8 ε‖Av₁‖, so the
+  breakdown is not flagged, but the residual is already 1.4e-14‖b‖ and GMRES stops on its
+  tolerance at k = 1 (Step 5.6).
 - `c > 0`: nonsymmetric, with a full upper triangle in `H̄`. As c·h/2 approaches and passes 1
   it becomes strongly *nonnormal*, and the eigenvalues stop predicting convergence (Step 6).
   With c = 10, 20, 42 or 100, none of the three right-hand sides broke down before k = n.
@@ -296,7 +303,9 @@ onto the xy-plane, so `Ax = b` has no solution: the z-component of b is out of r
 possible residual is `(0, 0, 1)`, of norm 1. GMRES's residual is 1.095 at step 1 and 1.0 at
 step 2. At step 3 the Krylov space is all of R³, Arnoldi breaks down, and `H_3` is singular to
 round-off, so back-substitution meets a zero pivot. `gmres_v3` reports convergence with
-residual 0 and returns x₃ = −1.47e16 (true residual 2.24).
+residual 0 and returns x₃ = −1.47e16 (true residual 2.24). `singular3(rhs="in_range")` keeps
+A and takes `b = (1, 1, 0)`, inside the range of A: a lucky breakdown at k = 2 with the exact
+answer (1, 1/2, 0), showing that a singular A alone doesn't make a breakdown bad.
 
 **`nilpotent2`: failure on the first step.** `A = [[0, 1], [0, 0]]`, `b = e_1`. Then `Ab = 0`,
 so `h_11 = h_21 = 0` and the pivot is zero before anything has happened. The system *does* have
@@ -517,69 +526,82 @@ identity and `solve` masks unused steps (fixed shapes, Step 9). Production also 
 new pivot `R_kk` before counting a step (Step 5).
 
 **Hands off:** "residual zero exactly when s_k = 0" fails when `R_k` is singular (Step 5).
-*The notebook's current "Next" paragraph introduces convergence and must be rewritten.*
 
 ## Step 5. Breakdown (`gmres_v4`) — *same math, computed safely*
 
-**Notebook:** `GMRES_5_breakdown.ipynb` (planned). Loads `gmres_v3`, `givens_rotation`,
-`back_substitution` from notebook 4 and `arnoldi_step_classical_gram_schmidt_twice` from
+**Notebook:** `GMRES_5_breakdown.ipynb` (done). Loads `gmres_v3`, `givens_rotation`,
+`back_substitution` from notebook 4 and the three Arnoldi step functions and `arnoldi` from
 notebook 2.
 
-**Starts from:** Arnoldi can produce a zero new vector (`h_{k+1,k} = 0`). Steps 2–4 already
-flagged several, and every one was harmless. This step shows that on a singular A it is not.
+**Starts from:** Arnoldi can produce a zero new vector (`h_{k+1,k} = 0`). Steps 2–4 flagged
+several, all harmless; Step 4's "residual zero exactly when s_k = 0" assumed `R_k` invertible.
 
-**Opening demonstration.** Run `gmres_v3` on the three breakdown examples (confirmed):
+**Builds:** `eigenvalues_touched_by` and `rotation_pairs` (helpers for looking only),
+`gmres_v4` (production's two checks, record keys `breakdown` and `residual_norm`), and, for
+5.9 only, `gmres_v4_relative_pivot`.
 
-| Example | v3 reports | v3 returns | true ‖b − Ax‖ |
-|---|---|---|---|
-| `eig_rhs` | converged, residual 0 | x = (0.5, 0, 0) | 0 |
-| `singular3` | converged, residual 0 (history 1.73, 1.10, 1.00, 0) | x₃ = −1.47e16 | 2.24 |
-| `nilpotent2` | converged, residual 0 | x = (inf, nan) | nan |
+**As built:** organised as good breakdowns against bad ones, with the rotation pair
+`(h̃_kk, h_{k+1,k})` that builds G_k discussed in every case, and a map of which matrices give
+which.
+- 5.1 `gmres_v3` on `eig_rhs`, `singular3`, `nilpotent2`: all three report convergence with
+  residual 0; only `eig_rhs` is right. Why it matters: Newton applies even a failed correction
+  (`newton_krylov.py`).
+- 5.2 What a breakdown is (K_k invariant, `A V_k = V_k H_k`) and when: at k = d, the degree of
+  b's minimal polynomial μ_b; for diagonalisable A, the number of distinct eigenvalues b
+  *touches*. H_d's eigenvalues are the roots of μ_b (checked on `eig_rhs`, `convdiff_n` c = 0,
+  `singular3`). Step 1.2's Cayley–Hamilton argument with μ_b: μ_b(0) ≠ 0 ⇒ x_d exact (even for
+  singular A); μ_b(0) = 0 ⇒ no x in K_d solves it. At a breakdown the pair is (h̃_kk, 0),
+  R_kk = |h̃_kk|, and H_k singular ⇔ h̃_kk = 0. A 2×2 map of the pair: ordinary step, good
+  breakdown, stagnation (0, ≠0; `shift_n`, not a breakdown), bad breakdown.
+- 5.3 Good breakdowns. Nonsingular A ⇒ always good (Saad, Prop. 6.10, one-line proof). Kinds:
+  b an eigenvector (`eig_rhs`, d = 1), b sharing a symmetry (`convdiff_n` c = 0 ones, d = 10:
+  grid reversal), repeated eigenvalues (diag(1,1,2,2,3,3) built inline, d = 3), nothing
+  special (d = n), singular A with b in its range (`singular3(rhs="in_range")`, d = 2).
+  Figure 5.1: residual histories dropping to exactly 0 at k = d.
+- 5.4 Bad breakdowns. Pair (0, 0): the smallest residual over K_k is |g_k| = ‖r_{k−1}‖, so the
+  step makes no progress and x_{k−1} is the best GMRES can find. Cause: K_d contains a null
+  vector of A. `singular3` (no solution; x₂ already optimal; round-off pivot) and
+  `nilpotent2` (solution exists but unreachable; exact zero pivot). Figure 5.2: `singular3`
+  residuals on a linear axis; Figure 5.3: R_k heatmaps for `geo3`, `singular3`, `nilpotent2`.
+- 5.5 Table: kind of A × kind of b → breakdown step, pair, good/bad, example.
+- 5.6 The breakdown test: relative, needs two passes, `not` so NaN counts. Missed lucky
+  breakdowns (the `sine` case) are harmless.
+- 5.7 `gmres_v4`: check 1 (a step with a non-finite column or `R_kk = 0` is not used), check 2
+  (after a breakdown or a non-finite candidate, the true residual decides between the
+  candidate and x_0). Checked against v3 with `compare_versions`.
+- 5.8 The `converged` × `breakdown` table, each cell run live, and how `newton_krylov.py`
+  counts failures and breakdowns.
+- 5.9 A relative pivot test, `R_kk > ε‖A v_k‖`, compared with v4 on every example.
 
-Why: at a breakdown s_k = 0, so `|g_{k+1}| = 0` and v3 reports convergence. That is valid only
-if `R_k` is nonsingular. On `singular3`, `R₃₃` ≈ 1e-16 and back-substitution divides by it; on
-`nilpotent2`, `A v_1 = 0`, both entries are zero, `givens_rotation` returns radius 0, and v3
-divides by that 0. The `converged` flag is all a caller checks, and in production the caller
-is a Newton iteration, which would take a garbage step without any sign of the cause.
+**Confirmed numbers:**
+- Rotation pair at the breakdown: `eig_rhs` (2, 0) at k = 1; `convdiff_n` c = 0 ones
+  (623.7, 0) at k = 10; diag(1,1,2,2,3,3) (1.686, 0) at k = 3; `geo3` (1.714, 0) at k = 3;
+  `diag_spread` (1.872, 0) and `convdiff_n` c = 20 (1077, 0) at k = 20; `singular3` in range
+  (1.265, 0) at k = 2; `singular3` (−1.67e-16, 0) at k = 3; `nilpotent2` exactly (0, 0) at
+  k = 1. Every good case is exact to ≤ 1.5e-13‖b‖.
+- `singular3` under v3, stopped after k = 1, 2, 3 steps: true residuals 1.0954, 1.0000, 2.2361;
+  x₂ = (1, 0.5, 1.5); `lstsq` on H̄₃ gives the minimum 1.0000.
+- Remainder at a true breakdown along each method's own run, in units of ε‖A v_j‖: `geo3`
+  step 3, 11.7 (classical, one pass) and 13.0 (modified), with loss of orthogonality 2.9e-15
+  and 3.1e-15; `convdiff_n` c = 0 step 10, 23.3 and 26.9, loss 8.5e-15 and 1.1e-14. Two
+  passes are flagged at both, with loss 3.3e-16 and 6.7e-16. (From a clean two-pass basis
+  instead, one pass misses only `geo3`'s classical step, at 1.2 ε.)
+- v4: `eig_rhs` 1 iteration, 2 matvecs; `geo3` 3, 4; `singular3` in range 2, 3; `singular3`
+  3 iterations, 4 matvecs, returns x = 0 with residual_norm 1.73 (converged False, breakdown
+  True); `nilpotent2` 0 iterations, 2 matvecs, x = 0, residual_norm 1.
+- `compare_versions(gmres_v3, gmres_v4)` on `geo3`, `diag_narrow` (k ≤ 11), `diag_spread`,
+  `convdiff_n` c = 20: x and residual history identical (difference exactly 0); matvecs differ
+  only at the breakdown k = n, by one. With rtol = 0, v4 reports `diag_spread`'s breakdown as
+  not converged (true residual 6.9e-13 = 1.5e-13‖b‖).
+- Relative pivot test: identical to v4 on all 13 examples except `singular3`, where it returns
+  x₂ (residual 1.0, 2 iterations, 4 matvecs). Smallest R_kk/‖A v_k‖ over every step of the
+  good examples is 0.155 (12-decade `diag_spread`); `singular3`'s round-off pivot is 0.65 ε.
 
-**Builds:** `gmres_v4`:
-- a step counts only with a usable pivot (stops before the division);
-- after a breakdown, compute the true residual and keep the candidate only if it is finite and
-  no worse than at the start (without restarts, "the start" is x_0 = 0, residual ‖b‖; Step 7
-  turns it into "the start of the cycle");
-- the `breakdown` record key, so a caller can tell "converged" from "the Krylov space stopped
-  growing".
-
-The breakdown test itself is already in `normalise_remainder` (Step 2), in production's form;
-this step explains it. v4 against v3 with `compare_versions` should be identical on every
-example without a breakdown.
-
-**Derivations to include:**
-- `h_{k+1,k} = 0` ⇒ `K_k` is invariant under A ⇒ the GMRES iterate is exact, provided `H_k` is
-  nonsingular.
-- For nonsingular A, `H_k` is nonsingular at a breakdown, so the breakdown is always "lucky"
-  (Saad, Prop. 6.10).
-- For singular A, `H_k` can be singular: the zero pivot, and why the residual stalls at the
-  part of b outside the range of A.
-- Why the test is relative (`‖w_after‖ ≤ ε·‖w_before‖`) and not `== 0`. This rests on
-  measured numbers: at true breakdowns one pass leaves 11.7 ε (classical) / 13.0 ε (modified)
-  times ‖A v_j‖ on `geo3` (step 3), and 27.7 ε / 26.9 ε on `convdiff_n` (c = 0, b = ones,
-  step 10), all above the threshold, so the test misses them. Two passes leave exactly 0 at
-  both, and the test catches them. So the test relies on classical Gram–Schmidt applied twice.
-- Why it is written `~(norm_after > eps * norm_before)`: a NaN then also counts as a breakdown.
-
-**Examples:** `eig_rhs`, `singular3`, `nilpotent2` (all new builders). Breakdowns already
-flagged in Steps 2–4, to reuse as the "lucky" cases: `geo3` at k = 3, `diag_spread` and
-`convdiff_n` (c = 20) at k = n = 20, `convdiff_n` (c = 0, b = ones) at k = 10.
-
-**Plots to include:**
-- `H̄` heatmap at breakdown for `eig_rhs` (zero sub-diagonal after step 1)
-- `H̄` / R heatmaps for `singular3` and `nilpotent2` showing the zero pivot
-- Residual history of `singular3` flattening at 1, with v3's false 0 marked
-- Table of `converged` × `breakdown` outcomes and what each combination means
-
-**Ties to code:** `arnoldi.py` (breakdown flag), `gmres.py: _arnoldi_steps` (`usable`),
-`_restart_cycle` (`verified` against `trusted`), the `GMRESDiagnostics` docstring.
+**Ties to code:** `arnoldi.py` (breakdown flag, zero row, NaN), `givens.py` (`_rotation`'s
+identity, `fold`'s docstring on a zero pivot), `gmres.py: _arnoldi_steps` (`usable`, the
+`jnp.where` revert, `steps + usable`), `_restart_cycle` (`broke_down`, `verified` against
+`trusted`), the `GMRESDiagnostics` docstring, `newton_krylov.py` (`gmres_failures`,
+`gmres_breakdowns`). Files are named without relative links into the sibling repo.
 
 **Hands off (end of Part I):** `gmres_v4` is a complete, correct GMRES: same iterates as
 v0 in exact arithmetic, accurate in floating point, cheap per step, and honest at a

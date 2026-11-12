@@ -75,12 +75,16 @@ def convdiff_n(n=20, *, c, rhs="ones"):
 
     With c = 0, two right-hand sides break down early. "ones" is symmetric about
     the middle of the grid, so its Krylov space runs out at k = n/2 (n even).
-    "sine" is sin(pi x_i), an exact eigenvector, so it runs out at k = 1.
+    "sine" is sin(pi x_i), an exact eigenvector in exact arithmetic, so its
+    Krylov space runs out at k = 1. In floating point the remainder of the first
+    Arnoldi step is about 60 eps ||A v_1||, too large to be flagged as a
+    breakdown, but the residual is already about 1e-14 ||b|| and GMRES stops on
+    its tolerance at k = 1.
 
     Args:
         n: number of interior grid points.
         c: advection velocity. No default: the value that makes the matrix
-            visibly nonnormal is chosen in Step 5.
+            visibly nonnormal is chosen in Step 6.
         rhs: "ones", "sine" (sin(pi x_i)) or "ramp" (x_i).
     """
     h = 1.0 / (n + 1)
@@ -107,6 +111,46 @@ def shift_n(n=8):
     return np.roll(np.eye(n), 1, axis=0), np.eye(n)[0]
 
 
+def eig_rhs():
+    """Upper-triangular 3x3 with eigenvalues 2, 3, 4, and b = e_1, an eigenvector.
+
+    A b = 2 b, so the Krylov space stops growing after one step: a lucky
+    breakdown, with the exact answer x = b / 2.
+    """
+    A = np.array([
+        [2.0, 1.0, 0.0],
+        [0.0, 3.0, 1.0],
+        [0.0, 0.0, 4.0],
+    ])
+    return A, np.eye(3)[0]
+
+
+def singular3(rhs="ones"):
+    """A = diag(1, 2, 0), singular: it squashes every vector onto the xy-plane.
+
+    Args:
+        rhs: "ones", b = (1, 1, 1), which sticks out of the xy-plane, so A x = b
+            has no solution and the smallest residual is (0, 0, 1). GMRES's
+            Krylov space reaches A's null space at k = 3, a breakdown with a
+            zero pivot. "in_range", b = (1, 1, 0), which lies in the xy-plane:
+            a lucky breakdown at k = 2 with the exact answer (1, 1/2, 0).
+    """
+    right_hand_sides = {
+        "ones": np.ones(3),
+        "in_range": np.array([1.0, 1.0, 0.0]),
+    }
+    return np.diag([1.0, 2.0, 0.0]), right_hand_sides[rhs]
+
+
+def nilpotent2():
+    """A = [[0, 1], [0, 0]], b = e_1: A b = 0, a zero pivot on the very first step.
+
+    A x = b has a solution, x = e_2, but it is not in span{b} = span{e_1},
+    so GMRES cannot reach it.
+    """
+    return np.array([[0.0, 1.0], [0.0, 0.0]]), np.eye(2)[0]
+
+
 # Name -> builder, for running every solver on every example (Step 9).
 # Builders with a required argument are registered with a fixed choice of it.
 EXAMPLES = {
@@ -115,6 +159,10 @@ EXAMPLES = {
     "diag_spread": diag_spread,
     "convdiff_n": lambda: convdiff_n(c=20.0),
     "shift_n": shift_n,
+    "eig_rhs": eig_rhs,
+    "singular3": singular3,
+    "singular3_in_range": lambda: singular3(rhs="in_range"),
+    "nilpotent2": nilpotent2,
 }
 
 
