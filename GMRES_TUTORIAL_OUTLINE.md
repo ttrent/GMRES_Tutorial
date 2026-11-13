@@ -5,8 +5,8 @@ from the bare idea to the solver in
 `WhistlerRegulatedHeatDispersion/src/time_integration/implicit/`. Every step follows the same
 pattern: run the previous version on a small matrix, show what goes wrong, then add the fix.
 
-Steps 0–5 are written. For those, this outline records what each notebook contains and the
-numbers it found. For Steps 6–9 it lists what each notebook should contain.
+Steps 0–6 are written. For those, this outline records what each notebook contains and the
+numbers it found. For Steps 7–9 it lists what each notebook should contain.
 
 ---
 
@@ -44,7 +44,7 @@ examples.
 | `GMRES_3_arnoldi_least_squares.ipynb` | 3 | I | same math, computed better | `gmres_v2` | 1, 2 | done |
 | `GMRES_4_givens.ipynb` | 4 | I | same math, computed better | `gmres_v3` | 2, 3 | done |
 | `GMRES_5_breakdown.ipynb` | 5 | I | same math, computed safely | `gmres_v4` | 2, 4 | done |
-| `GMRES_6_convergence.ipynb` | 6 | II | analysis, no new version | (uses v4) | 2, 5 | planned |
+| `GMRES_6_convergence.ipynb` | 6 | II | analysis, no new version | (uses v4) | 5 | done |
 | `GMRES_7_restart.ipynb` | 7 | II | changes the math | `gmres_v5` | 5 | planned |
 | `GMRES_8_preconditioning.ipynb` | 8 | II | changes the math | `gmres_v6` | 7 | planned |
 | `GMRES_8a_probing.ipynb` | appendix | II | helpers, no new version | probing helpers | 8 | proposed |
@@ -82,10 +82,13 @@ Each notebook ends on a problem, and the next one exists to fix it.
 
 **Part II: a fast GMRES**
 
-6. **Step 6 → 7.** Convergence depends on how small a polynomial can be on the eigenvalues,
-   and on some matrices that takes many steps. Many steps are expensive: step j orthogonalises
-   against j vectors and the solver stores all of them. Step 7 caps the number of steps at m
-   and starts again.
+6. **Step 6 → 7.** The residual is a curve q_k through (0, 1), and GMRES picks the lowest one
+   on the eigenvalues. Few steps when the eigenvalues sit in a few bunches whose width is small
+   compared with their distance from 0. Many when they reach toward 0 (`diag_spread`),
+   surround it (`shift_n`), or belong to a stencil matrix that clears about one cell per step
+   (`convdiff_n`, I + Δt·L at large Δt). Many steps are expensive: step j orthogonalises
+   against j vectors and the solver stores all of them. Step 7 caps the steps at m and starts
+   again.
 7. **Step 7 → 8.** Restarting caps the cost but can stall: `shift_n` never converges with
    m < n, and on `embree3` a longer restart length stalls where a shorter one converges.
    Step 8 removes the cause instead: it changes the problem so its eigenvalues cluster.
@@ -124,8 +127,8 @@ only available as a function `v -> Av`.
   A loaded function must therefore not depend on its notebook's other top-level variables.
 - **`tutorial_utils.py`** holds only what every notebook uses: `CountingMatvec`, the example
   builders (each returns `(A, b)`) and `EXAMPLES`, `compare_versions`, `import_from_notebook`,
-  and the plot style (`style_axes`, `plot_residuals`, `plot_matrix`, `add_figure_caption`,
-  colours). Notebooks import it with `%autoreload 2` and an explicit
+  and the plot style (`style_axes`, `plot_residuals`, `plot_residual_polynomial`,
+  `plot_matrix`, `add_figure_caption`, colours). Notebooks import it with `%autoreload 2` and an explicit
   `from tutorial_utils import (...)`.
 - `python tutorial_utils.py` runs `find_mismatched_copies`, which checks that any definition
   appearing in more than one place (today only `CountingMatvec`, in notebook 1 and the module)
@@ -163,6 +166,8 @@ only available as a function `v -> Av`.
 - x_0 = 0 throughout. `K_k` and `c` for the literal Krylov basis and its coefficients
   (Step 1); `v_1 … v_{k+1}`, `V_k`, `h_ij`, `H̄_k` ((k+1)×k), `H_k` (its top k×k block), `y`,
   `β = ‖b‖₂` and `e_1` from Step 2; `G_j`, `c_j`, `s_j`, `Ω_k`, `R_k` and `g` from Step 4.
+- The grid spacing is written Δs, with points s_i = iΔs (Steps 3–6), because h_ij is the
+  Hessenberg entry. Step 6 adds the time step Δt and the cell Péclet number cΔs/2.
 - Every symbol is defined in the text where it first appears, and every example matrix states
   its A and b the first time a notebook uses it.
 - Function and variable names spell terms out (`modified_gram_schmidt`, not `mgs`).
@@ -191,9 +196,11 @@ only available as a function `v -> Av`.
 
 **Still to check numerically**
 
-- The velocity c (or cell Péclet number c·h/2) at which `convdiff_n` becomes visibly
-  nonnormal at the chosen n. Step 6 picks it, and with it the builder's default c (none
-  today; Steps 3–4 and `EXAMPLES` use c = 20).
+- ~~The velocity c at which `convdiff_n` becomes visibly nonnormal.~~ Resolved in Step 6.6:
+  default c = 20 (cΔs/2 = 0.48 at n = 20). Its diagonal twin (same eigenvalues, b = ones) is
+  11× lower after 5 steps (0.076 against 0.836), and as c goes from 10 to 40 the eigenvalue
+  spread λ_max/λ_min falls from 49.5 to 1.86 with almost no change in convergence
+  (‖r₁₀‖/‖b‖ 0.604 → 0.705).
 - That v5, v6 and production `gmres` give the same iterates to round-off (Step 9).
 
 ---
@@ -220,20 +227,21 @@ GMRES's behaviour depends on both.
 | Name | Size | Shows | Used in Step | In `tutorial_utils.py` |
 |---|---|---|---|---|
 | `geo3` | 3×3 | Krylov geometry; Arnoldi by hand; a flagged breakdown at k = 3 | 1, 2, 3, 4, 5 | yes |
-| `diag_narrow` | 100×100 | Fast convergence, eigenvalues in [1, 1.5] | 1, 2, 3, 4 | yes |
+| `diag_narrow` | 100×100 | Fast convergence, eigenvalues in [1, 1.5] | 1, 2, 3, 4, 5, 6 | yes |
 | `diag_spread` | n×n, n = 20 | Slow convergence; v0's failure; at 12 decades, one-pass Gram–Schmidt's failure | 1–4, 6 (12 decades: 2, 3) | yes |
 | `convdiff_n` | n×n, n ≈ 20–50 | Hessenberg shape, nonnormality, preconditioning | 3, 4, 5, 6, 7, 8 | yes |
 | `shift_n` | n×n, n = 8 | No progress at all until step n | 4, 6, 7 | yes |
 | `eig_rhs` | 3×3 | Lucky breakdown at step 1 | 5 | yes |
 | `singular3` | 3×3 | Breakdown with a round-off zero pivot; v3 reports false convergence. With `rhs="in_range"`, a lucky breakdown on the same singular A | 5 | yes |
 | `nilpotent2` | 2×2 | Exact zero pivot on the very first step | 5 | yes |
-| `diag_clustered` | n×n, n ≈ 20 | Fast convergence from clustered eigenvalues | 6 | to add |
+| `diag_clustered` | n×n, n = 30 (also 3000 in Step 6) | Three bunches ±1e-3 around 1, 2, 3: a drop of ~1e-4 every 3 steps, 9 steps to 1e-10 at any n | 6 | yes |
 | `embree3` | 3×3 | A longer restart can be slower | 7 | to add |
 | `two_scale` | 2n×2n, n ≈ 10 | Why scaling matters for a 2-norm method | 8 | to add |
 
 `EXAMPLES` (the name → builder map Step 9 runs over) holds `geo3`, `diag_narrow`,
-`diag_spread`, `convdiff_n` (c = 20), `shift_n`, `eig_rhs`, `singular3`, `singular3_in_range`
-and `nilpotent2` today. Later builders join it when added.
+`diag_spread`, `diag_clustered`, `convdiff_n` (through its default, c = 20), `shift_n`,
+`eig_rhs`, `singular3`, `singular3_in_range` and `nilpotent2` today. Later builders join it
+when added.
 
 ### Each matrix
 
@@ -252,38 +260,52 @@ steps, far fewer than n.
 
 **`diag_spread` and `diag_clustered`: eigenvalues you choose.** Diagonal matrices
 `np.diag(lam)` with `b = ones(n)`. Their eigenvalues are the diagonal entries and their
-eigenvectors the coordinate axes, so they are *normal* and Step 6's eigenvalue bound is sharp.
-That isolates the one variable Step 6 is about: where the eigenvalues sit. Being symmetric,
+eigenvectors the coordinate axes, so they are *normal*, and the residual is exactly the curve
+at the dots: with b = ones, ‖r_k‖/‖b‖ is the RMS of q_k(λ_i) (Step 6.1). That isolates the one variable Step 6 is about: where the eigenvalues sit. Being symmetric,
 they give a tridiagonal `H̄`, so they can't show the Hessenberg shape.
 - *spread:* `diag_spread(n=20, decades=4)`, eigenvalues `np.logspace(0, decades, n)`
   (condition number 1e4). Convergence is slow and steady. With `decades=12` (condition number
   1e12) one-pass Gram–Schmidt visibly fails (Steps 2, 3). `convdiff_n` can't show that: for
   n = 20–50 and c up to 100, one pass of either kind keeps the loss of orthogonality below
   about 4e-13.
-- *clustered (to add):* e.g. three tight clusters around 1, 2 and 3 (spread ±1e-3). GMRES
-  converges in about 3 steps whatever n is, since one degree-3 polynomial can be small on all
-  three clusters.
+- *clustered:* `diag_clustered(n=30, centers=(1, 2, 3), spread=1e-3)`, the n eigenvalues
+  shared evenly between three bunches, each evenly spaced over center ± spread. One degree-3
+  polynomial is small on all three bunches, so the residual drops by about 1e-4 every 3 steps
+  (1.8e-4, 3.3e-8, 5.9e-12 at k = 3, 6, 9) and reaches 1e-10 in 9 steps at n = 30, 300 or
+  3000. Shrink each bunch to a point and it becomes Step 5.3's diag(1,1,2,2,3,3).
 
-**`convdiff_n`: the PDE-like example.** `convdiff_n(n, *, c, rhs="ones")`: central
-differences of `−u'' + c·u'` on [0, 1], Dirichlet boundaries, spacing `h = 1/(n+1)`. A
-tridiagonal matrix with diagonal `2/h²`, sub-diagonal `−1/h² − c/(2h)` and super-diagonal
-`−1/h² + c/(2h)`. `rhs` is `"ones"`, `"sine"` (sin(πx_i)) or `"ramp"` (x_i). The velocity c
-(equivalently the cell Péclet number c·h/2) sets its character:
+**`convdiff_n`: the PDE-like example.** `convdiff_n(n=20, *, c=20.0, rhs="ones")`: central
+differences of `−u'' + c·u'` on [0, 1], Dirichlet boundaries, spacing `Δs = 1/(n+1)`. A
+tridiagonal matrix with diagonal `2/Δs²`, sub-diagonal `−1/Δs² − c/(2Δs)` and super-diagonal
+`−1/Δs² + c/(2Δs)`. `rhs` is `"ones"`, `"sine"` (sin(πs_i)) or `"ramp"` (s_i). The velocity c
+(equivalently the cell Péclet number cΔs/2) sets its character:
 - `c = 0`: symmetric, the 1D heat-equation matrix, with a tridiagonal `H̄` (Step 3.4). Two
   right-hand sides break down early: `ones` is symmetric about the grid's middle, so its
   Krylov space stops at k = n/2 (k = 10 for n = 20); `sine` is an eigenvector in exact
   arithmetic (k = 1). In floating point the step-1 remainder of `sine` is 61.8 ε‖Av₁‖, so the
   breakdown is not flagged, but the residual is already 1.4e-14‖b‖ and GMRES stops on its
   tolerance at k = 1 (Step 5.6).
-- `c > 0`: nonsymmetric, with a full upper triangle in `H̄`. As c·h/2 approaches and passes 1
-  it becomes strongly *nonnormal*, and the eigenvalues stop predicting convergence (Step 6).
-  With c = 10, 20, 42 or 100, none of the three right-hand sides broke down before k = n.
+- `c > 0`: nonsymmetric, with a full upper triangle in `H̄`, and *nonnormal*: the eigenvalues
+  stop predicting convergence (Step 6.6). For cΔs/2 < 1 the eigenvalues are real. With
+  b = ones, A·ones is nonzero only on cells 1 and n, so the residual is exactly 1 on the middle
+  n − 2k cells and ‖r_k‖ ≥ √(n − 2k) (c = 0 sits exactly on this floor and breaks down at
+  k = n/2). At c = 20 only the inflow front (s = 0) clears cells, and the residual follows the
+  one-sided curve √(1 − k/n): 0.836 at k = 5, 0.670 at k = 10, a mean factor of 0.961 per step
+  (the 0.96 of Step 4.7), while the diagonal twin with the same eigenvalues is at 0.076 at
+  k = 5. At c = 42 (cΔs/2 = 1) the super-diagonal is 0 up to round-off (5.7e-14), A is lower
+  bidiagonal with the single eigenvalue 2/Δs², and ‖r_k‖/‖b‖ = √(1 − k/n): one dot, all n
+  steps. With c = 10, 20, 42 or 100, none of the three right-hand sides broke down before
+  k = n.
 
 It is the closest example to the simulation (a 1D grid, a tridiagonal stencil), large enough to
 show restart stagnation, and its structure makes tridiagonal preconditioning and probing
-(Step 8) natural. A variant `I + Δt·L` (one backward-Euler step of the same operator) adds a
-second knob: small Δt pushes the eigenvalues toward 1 and GMRES gets easy, a preview of why
-implicit steps with moderate Δt converge quickly.
+(Step 8) natural. A variant `I + Δt·L` (one backward-Euler step of the heat equation, L =
+`convdiff_n(n, c=0)`) adds a second knob: small Δt pushes the eigenvalues toward 1 and GMRES
+gets easy, which is why implicit steps with moderate Δt converge quickly. Built inline in
+Step 6.7 with n = 400 and `rhs="ramp"` (ones and sine break down early at c = 0): steps to
+rtol = 1e-10 ≈ 22.4·√Δt/Δs for Δt/Δs² from 1 to 300 (23 to 377 steps), 5–13 steps below
+that, and capped at n = 400 from Δt/Δs² = 1000. Rows of (I + Δt·L)⁻¹ fall by a factor e every
+√Δt/Δs cells.
 
 **`shift_n`: the worst case.** The cyclic shift, `A e_j = e_{j+1}` and `A e_n = e_1`, with
 `b = e_1`. A permutation matrix: orthogonal, condition number 1. GMRES still makes **no
@@ -613,42 +635,108 @@ breakdown. What it doesn't control is how many steps it needs (Step 6).
 
 ## Step 6. Why and when GMRES converges — *analysis, no new version*
 
-**Notebook:** `GMRES_6_convergence.ipynb` (planned). Loads `gmres_v4` from notebook 5 and
-`arnoldi` from notebook 2 (for Ritz values).
+**Notebook:** `GMRES_6_convergence.ipynb` (done). Loads `gmres_v4` from notebook 5.
 
 **Starts from:** Step 4's `|s_k|`: about 0.1 per step on `diag_narrow`, about 0.96 on
 `convdiff_n`, exactly 1 on `shift_n`. What decides it?
 
-**The central idea:** `r_k = q_k(A) b` with deg q_k ≤ k and `q_k(0) = 1`, and GMRES picks the
-q_k that makes ‖r_k‖ smallest. This picks up Step 1.2's "Krylov vectors are polynomials in A".
+**Builds:** `residual_polynomial(A, b, k, *, solver=gmres_v4, **solver_options)`, a helper
+for looking only (no solver version): it runs the solver for k steps, forms r_k with A, and
+fits q_k through the heights r_k[i]/b_i at the eigenvalues of a diagonal A. Self-contained,
+so Steps 7–8 can load it with `import_from_notebook` and pass `solver=gmres_v5, restart=m`.
+In `tutorial_utils.py`: `diag_clustered`, `plot_residual_polynomial` (the dots-and-curve
+picture), and `convdiff_n`'s default c = 20.
 
-**Derivations to include:**
-- The bound for diagonalisable `A = XΛX⁻¹` (X the eigenvectors, Λ the diagonal matrix of
-  eigenvalues λ): `‖r_k‖/‖b‖ ≤ κ(X) · min_q max_λ |q(λ)|`, with κ(X) the condition number of X.
-- Clustered spectrum: about as many steps as there are clusters.
-- Why `shift_n` stagnates: `A K_k ⟂ b` until k = n; the roots of unity.
-- Ritz values: the eigenvalues of `H_k = V_kᵀ A V_k` (derived in Step 3) approximate those of A.
-- The roots of q_k are the harmonic Ritz values.
-- Nonnormal matrices: κ(X) can be huge, so eigenvalues alone don't predict convergence.
+**The central picture ("dots and curve"):** `r_k = q_k(A) b` with deg q_k ≤ k and
+`q_k(0) = 1`; the eigenvalues are dots, q_k is a curve held at 1 at z = 0, and GMRES picks
+the lowest curve on the dots. No eigenvalue bound with κ(X), no Ritz or harmonic Ritz values.
 
-**Examples:** `diag_clustered` (new builder), `diag_spread`, `shift_n`, `convdiff_n` with c
-increasing. This step picks `convdiff_n`'s default c (see "Still to check").
+**As built:**
+- Opening: Figure 6.1 and a table of n, cond(A), steps to 1e-10 and the mean factor per step
+  over k = 1..7 for `diag_narrow`, `diag_spread`, `convdiff_n`, `shift_n` (grey, dashed, as
+  the reference worst case). Neither n nor cond(A) orders them.
+- 6.1 The residual is a curve through (0, 1): derivation from Step 1.2, q(0) = 1 in words; for
+  diagonal A, `r_k[i] = q_k(λ_i) b_i` and ‖r_k‖/‖b‖ is the RMS height of the dots. Figure 6.2
+  (q_k for k = 1, 2, 3 on `diag_narrow`, linear and |q| on a log axis). Check: RMS against
+  `residual_history`, and |q_k(0) − 1| for k ≤ 8.
+- 6.2 GMRES beats any curve you can draw: the hand curve (1 − z/1.25)^k, the bound
+  ‖r_k‖ ≤ max|q(λ_i)|·‖b‖ for diagonal A, Richardson as an aside. Figure 6.3. Shifted bunches
+  [a, a + 0.5] for a = 0.1, 1, 10, Figure 6.4. Rule of thumb: width against distance from 0.
+  Scaling A leaves residuals unchanged (iterates divided by α, checked); shifting A changes
+  convergence.
+- 6.3 Dots near 0 are expensive: `diag_spread`, Figure 6.5 (log z axis, |q_k| for k = 2, 5, 8,
+  and the history against 0.9998^k). GMRES removes the large isolated dots first;
+  superlinear convergence; tie to Step 1.7's power iteration.
+- 6.4 A few bunches take a few steps: `diag_clustered` at n = 30 and 3000, Figure 6.6; tie to
+  Step 5.3's diag(1,1,2,2,3,3). Outliers, Figure 6.7.
+- 6.5 A ring around 0: `shift_n`'s eigenvalues are the 8th roots of unity; the mean of q over
+  them is q(0) = 1, and b = e₁ weighs every orthonormal eigenvector equally, so
+  ‖r_k‖ ≥ ‖b‖ for k < 8. Figure 6.8 (complex plane with log|q| contours for a hand curve with
+  roots on three dots, and the circle unrolled). Ties to Step 4.7 (A K_k ⟂ b) and Step 5's
+  stagnation cell; preview of restarting with m < 8.
+- 6.6 When the dots mislead (`convdiff_n`): the diagonal twin and the sweep over c, Figure 6.9.
+  Grid language: A^j·ones lives within j cells of the ends, so ‖r_k‖ ≥ √(n − 2k); Figure 6.10
+  (|A⁻¹| with the band of a degree-5 polynomial, the residual cell by cell, the history
+  against √(1 − 2k/n) and √(1 − k/n)). Nonnormal introduced as a word. c = 42 in one
+  paragraph.
+- 6.7 The time-step knob: A = I + Δt·L, dots in (1, 1 + 4Δt/Δs²), steps ∝ √Δt/Δs.
+  Figure 6.11 (steps against Δt/Δs², n = 400, `rhs="ramp"`), Figure 6.12 (|A⁻¹| at
+  Δt/Δs² = 10 and 1000). Tie to production: `preconditioner.py` registers only `"none"`.
+- 6.8 Why many steps hurt: about 4nj multiply-adds and j + 1 stored vectors in step j, about
+  2nk² in total, counted (not timed) for the 377-step solve, Figure 6.13.
 
-**Plots to include:**
-- Eigenvalues of each example in the complex plane
-- Eigenvalues with contours of `|q_k(z)|` for k = 1, 2, 3, …
-- Roots of q_k moving toward the eigenvalues as k grows
-- Residual histories: `diag_clustered`, `diag_spread`, `shift_n`, `convdiff_n` together
-- `convdiff_n` convergence as the Péclet number grows (more nonnormal)
-- Pseudospectra of `convdiff_n` (optional, probably too advanced)
+**Confirmed numbers:**
+- Opening table: cond(A) 1.5, 1e4, 50.8, 1; steps to 1e-10: 11, 20, 20, 8; mean factor over
+  k = 1..7: 0.105, 0.930, 0.964, 1.000.
+- 6.1 (`diag_narrow`): RMS heights 0.116, 0.0123, 0.00127 for k = 1, 2, 3, equal to
+  `residual_history` to ≤ 3e-17 for k ≤ 8. |q_k(0) − 1| ≤ 3e-10 for k ≤ 8, 1.0e-3 at k = 14
+  (so curves are drawn only for k ≤ 8; ≤ 6 for clusters, ≤ 4 for bunches far from 0). With
+  warnings as errors, no `RankWarning` at the k used.
+- 6.2: GMRES 0.116 then 0.102–0.106 per step, 11 steps to 1e-10; the hand curve's bound 0.2^k
+  needs 15, its actual residual 14 (factor 0.117 → 0.19). GMRES's roots at k = 5: 1.022,
+  1.118, 1.255, 1.389, 1.480; largest height on the dots 4.2e-5 against the hand curve's
+  3.2e-4 (RMS 1.3e-5 against 1.0e-4). Shifted bunches: a = 0.1, 27 steps (0.42 per step);
+  a = 1, 11 (0.10); a = 10, 6 (0.013). 7.3·A: residuals equal to 1.4e-15 relative, iterates
+  divided by 7.3 to 3.7e-16.
+- 6.3 (`diag_spread`): k = 1 root at 6189; a root on 10⁴ from k = 5; at k = 8 roots on 2336,
+  3793, 6158, 10⁴ with q₈(1) = 0.98. Factor per step ≈ 0.94 for k = 4–6, 0.35 on the last
+  step before the breakdown at k = 20.
+- 6.4: `diag_clustered` 1.8e-4, 3.3e-8, 5.9e-12 at k = 3, 6, 9 (n = 30); 1.7e-4, 2.8e-8,
+  4.6e-12 at n = 3000; 9 steps to 1e-10 at both. Bunch [1, 1.5] alone 11 steps; with 5, 20,
+  100: 14; with 0.01: 14.
+- 6.5 (`shift_n`): residual exactly 1 for k ≤ 7, 0 at k = 8. Hand curve with roots at ω₀, ω₁,
+  ω₇: heights 0, 0, 2, 5.23, 6.83, 5.23, 2, 0; mean 1.000; RMS 3.70.
+- 6.6 (`convdiff_n`, n = 20): at c = 20 the eigenvalues are real (imaginary parts exactly 0),
+  λ_max/λ_min = 14.3, cond(A) = 50.8. Twin against `convdiff_n`: 0.076 against 0.836 at k = 5,
+  0.006 against 0.670 at k = 10. Sweep c = 10, 20, 30: spread 49.5, 14.3, 5.49; cond 89.1,
+  50.8, 35.4; ‖r₁₀‖/‖b‖ 0.604, 0.670, 0.693 (the earlier check: 1.86 and 0.705 at c = 40,
+  where `eigvals` is off by 1e-2, so the notebook stops at 30). At c = 0 the b = ones twin
+  also separates (0.567 against 0.949 at k = 1), because b touches only 10 eigenvectors.
+  A^j·ones nonzero on cells 1..j and n−j+1..n at c = 0 and 20; middle cells of r₅ exactly 1;
+  ‖r_k‖/√(n − 2k) is 1.000 for all k ≤ 9 at c = 0 and 1.01 → 2.23 at c = 20. c = 20 against
+  √(1 − k/n): 0.836/0.866 at k = 5, 0.670/0.707 at k = 10; mean factor over 10 steps 0.961
+  against 0.966. c = 42: super-diagonal 5.7e-14, diagonal 882, residual equal to √(1 − k/n)
+  to 1e-15.
+- 6.7 (n = 400, `rhs="ramp"`, rtol = 1e-10): Δt/Δs² = 0.01, 0.03, 0.1, 0.3 → 5, 6, 9, 13
+  steps; 1, 3, 10, 30, 100, 300 → 23, 39, 70, 123, 226, 377; 1000 and above → 400 (the cap,
+  flagged as a breakdown at k = n, converged). C = 22.4 fitted over 1 ≤ Δt/Δs² ≤ 300, against
+  ln(2/rtol) = 23.7. No early breakdown. Rows of A⁻¹ fall by e every 3.18 and 31.62 cells at
+  Δt/Δs² = 10 and 1000 (√Δt/Δs = 3.16, 31.62).
+- 6.8 (Δt/Δs² = 300, 377 steps): orthogonalisation 1.14e8 multiply-adds against 4.52e5 for
+  the stencil matvecs (×252); basis 151,200 numbers against 1,200.
 
-**Ending, to motivate Step 7:** a short preview of the cost of many steps. Step j's
-orthogonalisation costs `O(n·j)` and the basis takes `O(n·k)` memory, so a slowly converging
-solve gets more expensive with every step (e.g. time per step growing on a larger
-`convdiff_n`). Step 7 does the full cost argument.
+**Ties to code:** no production changes. `gmres.py: gmres` has the two knobs Steps 7 and 8
+explain, `restart` and `preconditioner`; `preconditioner.py` registers only `"none"`, so
+today production relies on the time step alone.
 
-**Hands off:** convergence can take many steps, and many steps cost time and memory (Step 7).
-It also depends on where the eigenvalues sit, which Step 8 changes.
+**Hands off:** convergence can take many steps (eigenvalues near or around 0, or a stencil
+matrix clearing one cell per step), and many steps cost about 2nk² work and (k + 1)n memory
+(Step 7). Where the eigenvalues sit is what Step 8 changes.
+
+**Proposed for the author, not applied:** drop Step 7's Elman bound and field-of-values plot,
+so that Part II stays in the dots-and-curve picture: restarting as a product of degree-m
+curves, each held at (0, 1). Steps 7–8 can load `residual_polynomial` from notebook 6 to
+draw them.
 
 ## Step 7. Restarting: GMRES(m) (`gmres_v5`) — *changes the math*
 

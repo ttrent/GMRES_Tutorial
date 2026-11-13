@@ -67,7 +67,21 @@ def diag_spread(n=20, decades=4):
     return np.diag(np.logspace(0, decades, n)), np.ones(n)
 
 
-def convdiff_n(n=20, *, c, rhs="ones"):
+def diag_clustered(n=30, centers=(1.0, 2.0, 3.0), spread=1e-3):
+    """Diagonal, eigenvalues in tight bunches around each center, b = ones: about one step per bunch.
+
+    The n eigenvalues are shared as evenly as possible between the bunches, each
+    evenly spaced in [center - spread, center + spread]. With the defaults the
+    residual drops by about 1e-4 every 3 steps, whatever n is (Step 6.4).
+    """
+    eigenvalues = np.concatenate([
+        np.linspace(center - spread, center + spread, part.size)
+        for center, part in zip(centers, np.array_split(np.arange(n), len(centers)))
+    ])
+    return np.diag(eigenvalues), np.ones(n)
+
+
+def convdiff_n(n=20, *, c=20.0, rhs="ones"):
     """Central differences of -u'' + c u' on [0, 1], Dirichlet boundaries, h = 1/(n+1).
 
     Tridiagonal: 2/h^2 on the diagonal, -1/h^2 - c/(2h) below it and
@@ -83,8 +97,9 @@ def convdiff_n(n=20, *, c, rhs="ones"):
 
     Args:
         n: number of interior grid points.
-        c: advection velocity. No default: the value that makes the matrix
-            visibly nonnormal is chosen in Step 6.
+        c: advection velocity. The default, 20, gives a cell Péclet number
+            c h / 2 ≈ 0.48 at n = 20: real eigenvalues within a factor 14 of
+            each other, yet GMRES gains only about 4% per step (Step 6.6).
         rhs: "ones", "sine" (sin(pi x_i)) or "ramp" (x_i).
     """
     h = 1.0 / (n + 1)
@@ -157,7 +172,8 @@ EXAMPLES = {
     "geo3": geo3,
     "diag_narrow": diag_narrow,
     "diag_spread": diag_spread,
-    "convdiff_n": lambda: convdiff_n(c=20.0),
+    "diag_clustered": diag_clustered,
+    "convdiff_n": convdiff_n,
     "shift_n": shift_n,
     "eig_rhs": eig_rhs,
     "singular3": singular3,
@@ -277,6 +293,82 @@ def plot_residuals(ax, residual_history, *, b_norm, label=None, color=LINE_COLOR
     ax.set_xlabel("step k  (one matvec per step)")
     ax.set_ylabel(r"$\|r_k\|_2 \,/\, \|b\|_2$")
     return line
+
+
+def plot_residual_polynomial(ax, eigenvalues, heights, *, polynomial=None, magnitude=False,
+                             log_eigenvalues=False, z_range=None, color=LINE_COLOR, label=None):
+    """Dots and curve: the residual polynomial q_k at the eigenvalues (dots) and between them (curve).
+
+    Draws a dot at (lambda_i, heights[i]) for each eigenvalue, the pinned point
+    (0, 1), since q_k(0) = 1 for every k, and, if given, the curve q_k(z).
+
+    Args:
+        ax: matplotlib axes.
+        eigenvalues: the real eigenvalues lambda_i, the dots' positions on the z axis.
+        heights: q_k(lambda_i); for a diagonal A, r_k[i] / b_i.
+        polynomial: callable z -> q_k(z), e.g. a numpy Polynomial, drawn as the
+            curve. None draws only the dots.
+        magnitude: plot |q| on a log axis instead of q on a linear one; roots
+            then show as downward spikes. Exact zeros go on the bottom edge.
+        log_eigenvalues: log-scaled z axis, for eigenvalues spread over decades.
+            z = 0 is then off the axis, and the pinned point is noted at the left edge.
+        z_range: (z_min, z_max) for the curve. Defaults to 0 (min lambda / 3 on
+            a log axis) up to 1.05 max lambda.
+        color, label: of the curve and its dots.
+
+    Returns:
+        The curve's line, or the dots' line if no polynomial is given.
+    """
+    eigenvalues = np.asarray(eigenvalues, dtype=float)
+    heights = np.asarray(heights, dtype=float)
+    if z_range is None:
+        z_min = eigenvalues.min() / 3 if log_eigenvalues else 0.0
+        z_range = (z_min, 1.05 * eigenvalues.max())
+    if log_eigenvalues:
+        z = np.geomspace(z_range[0], z_range[1], 2000)
+        ax.set_xscale("log")
+    else:
+        z = np.linspace(z_range[0], z_range[1], 2000)
+    # Sample the dots and the roots too, so that narrow bunches and root spikes are resolved.
+    extra = [eigenvalues]
+    if hasattr(polynomial, "roots"):
+        roots = np.asarray(polynomial.roots())
+        extra.append(roots[np.abs(roots.imag) <= 1e-12 * (1 + np.abs(roots))].real)
+    extra = np.concatenate(extra)
+    z = np.union1d(z, extra[(extra >= z_range[0]) & (extra <= z_range[1])])
+
+    def shown(values):
+        return np.abs(values) if magnitude else values
+
+    dot_heights = shown(heights)
+    if magnitude:
+        ax.set_yscale("log")
+        nonzero = dot_heights[dot_heights > 0]
+        floor = (nonzero.min() if nonzero.size else 1e-16) / 10
+        dot_heights = np.maximum(dot_heights, floor)   # exact zeros on the bottom edge
+
+    line = None
+    if polynomial is not None:
+        curve = shown(polynomial(z))
+        if magnitude:
+            curve = np.maximum(curve, floor)
+        (line,) = ax.plot(z, curve, color=color, linewidth=2, label=label)
+    (dots,) = ax.plot(eigenvalues, dot_heights, linestyle="none", marker="o", markersize=5,
+                      color=color, label=None if polynomial is not None else label)
+
+    if log_eigenvalues:
+        ax.annotate("q(0) = 1 at z = 0, off this axis", xy=(0.01, 0.97), xycoords="axes fraction",
+                    ha="left", va="top", fontsize=9, color=REFERENCE_COLOR)
+    else:
+        ax.plot([0.0], [1.0], linestyle="none", marker="o", markersize=8, markerfacecolor="white",
+                markeredgecolor=REFERENCE_COLOR, markeredgewidth=1.5, zorder=5)
+        ax.annotate("q(0) = 1", xy=(0.0, 1.0), xytext=(6, 4), textcoords="offset points",
+                    fontsize=9, color=REFERENCE_COLOR)
+        if not magnitude:
+            ax.axhline(0.0, color=REFERENCE_COLOR, linewidth=1)
+    ax.set_xlabel("z")
+    ax.set_ylabel(r"$|q_k(z)|$" if magnitude else r"$q_k(z)$")
+    return line if line is not None else dots
 
 
 def plot_matrix(ax, M, *, title=None, log=False, floor=0.0, vmin=None, vmax=None, colorbar=True):
